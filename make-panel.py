@@ -15,7 +15,7 @@ Options:
   --max=<int>  [default: 255]
   --label=<string>  The label. Defaults to 1, 2, 3, ...
   --hue=<int>  If supplied, will be used for all panels; overrides hues.
-  --hues=<int>  [default: 180 58 300 0] The hues to use for the merged image. Can be between 0-179, corresponding to 0-360 degrees on an HSV color wheel
+  --hues=<int>  [default: 180 58 300 0] The hues to use for the merged image. Can be between 0-360, corresponding to the HSV color wheel
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Pixels per micron.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
