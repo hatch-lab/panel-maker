@@ -15,7 +15,7 @@ Options:
   --max=<int>  [default: 255]
   --label=<string>  The label. Defaults to 1, 2, 3, ...
   --hue=<int>  If supplied, will be used for all panels; overrides hues.
-  --hues=<int>  [default: 180 58 300 0] The hues to use for the merged image. Can be between 0-360, corresponding to the HSV color wheel
+  --hues=<int>  [default: 180 58 300 -1] The hues to use for the merged image. Can be between 0-360, corresponding to the HSV color wheel
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Pixels per micron.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
@@ -50,8 +50,8 @@ schema = Schema({
   '--min': [ And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0') ],
   '--max': [ And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0') ],
   '--label': lambda x: len(x) >= 0,
-  '--hue': Or(None, And(Use(int), lambda n: 0 <= n < 360, error='--hue must be an integer between 0 and 359')),
-  '--hues': [ And(Use(int), lambda n: 0 <= n < 360, error='--hues must be an integer between 0 and 359') ],
+  '--hue': Or(None, And(Use(int), lambda n: -1 <= n <= 360, error='--hue must be an integer between 0 and 360')),
+  '--hues': [ And(Use(int), lambda n: -1 <= n <= 360, error='--hues must be an integer between 0 and 360') ],
   '--rows': And(Use(int), lambda n: 0 < n, error='--rows must be an integer greater than or equal to 1'),
   '--pixels-per-um': Or(None, Use(float, error="pixels-per-um does not appear to be a number" )),
   '--bar-microns': And(Use(int), lambda n: 1 < n, error="--bar-microns must be an integer greater than 0"),
@@ -100,9 +100,9 @@ labels = fill_list(labels, len(tiff_paths), "")
 hues = fill_list(hues, len(tiff_paths), 0)
 
 # CV2 uses angles 0-179
-hues = [ int(math.floor(x/2)) for x in arguments['--hues'] ]
+hues = [ int(math.floor(x/2)) if x != -1 else -1 for x in arguments['--hues'] ]
 
-font_path = Path("lib/Roboto-Bold.ttf").resolve()
+font_path = Path("Roboto-Bold.ttf").resolve()
 
 
 ## Get images
@@ -146,10 +146,17 @@ images = [ cv2.cvtColor(x, cv2.COLOR_GRAY2BGR) for x in images ]
 ## Create merged image
 if not skip_merge:
   merge_images = [ cv2.cvtColor(x, cv2.COLOR_BGR2HSV) for x in images ]
+  bw_images = []
 
   for key in range(len(merge_images)):
     img = merge_images[key]
-    img[...,0] = hues[key]
+    if key < len(hues) and hues[key] != -1:
+      img[...,0] = hues[key]
+      img[...,1] = 255
+    else:
+      bw_images.append(images[key])
+      continue
+      
 
   # Blend
   # Find new angle/mag at each px
@@ -164,6 +171,7 @@ if not skip_merge:
   vsin = np.vectorize(math.sin)
   vsqrt = np.vectorize(math.sqrt)
   vatan2 = np.vectorize(math.atan2)
+
   for img in merge_images:
     x += (img[...,2]*vcos(vrad(img[...,0])))
     y += (img[...,2]*vsin(vrad(img[...,0])))
@@ -180,6 +188,11 @@ if not skip_merge:
   merged[...,2] = mag
 
   merged = cv2.cvtColor(merged.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+  weight = 1/len(images)
+  merged_weight = 1-weight
+  for img in bw_images:
+    merged = cv2.add(img,merged)
 
   images = images + [ merged ]
 
@@ -214,22 +227,18 @@ for img in images:
 
 
 ## Add scale bar
-bar_padding = 20
+bar_padding = panel_padding+20
 bar_height = 10
 
 bar_width = int(pixels_per_micron*bar_microns)
 
-pt1 = (combined.shape[0]-bar_padding-bar_width, combined.shape[1]-bar_padding)
-pt2 = (combined.shape[0]-bar_padding, combined.shape[1]-bar_padding-bar_height)
+pt1 = (combined.shape[1]-bar_padding-bar_width, combined.shape[0]-bar_padding)
+pt2 = (combined.shape[1]-bar_padding, combined.shape[0]-bar_padding-bar_height)
 combined = cv2.rectangle(combined, pt1, pt2, (255,255,255), -1)
 
 
-## Write out the image
-cv2.imwrite(str(output_dir / "panel.tiff"), combined)
-
-
 ## Now add text, meta-data
-combined = Image.open(str(output_dir / "panel.tiff"))
+combined = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
 draw = ImageDraw.Draw(combined)
 
 font = ImageFont.truetype(str(font_path), size=45)
