@@ -85,12 +85,23 @@ The default labels for each image are simply numbers: 1, 2, … To specify your 
 This will set the first image’s label to DAPI, the second to GFP, and third to TagRFP.
 
 ### Colors
-If your panel has a merged image (the default), you can specify the colors with `--hue`. The default hues are 180º, 58º, 300º, and 0º. If you have more than four images, the rest will default to 0º.
+If your panel has a merged image (the default), you can specify the colors with `--hues`. The default hues are 180º, 58º, 300º, and 0º. If you have more than four images, the rest will default to 0º.
 
 The use of degrees corresponds to HSV color hue. You can use: http://hslpicker.com to find angles.
 
-`python make-panel.py /folder/of/tiff --hue=150 --hue=300`
+`python make-panel.py /folder/of/tiff --hues=150 --hues=300`
 This will set the color of the first channel to green and the second to magenta.
+
+If you want to use white as a color, this is specified by setting `--hues=-1`.
+
+`python make-panel.py /folder/of/tiff --hues=150 --hues=300 --hues=-1`
+This will set the color of the first channel to green, the second to magenta, and the third to white.
+
+### Merged image
+By default, all images are combined into a color merge, using the colors specified by `--hues`. If you don’t want to make a merged image, use `--skip-merge`.
+
+`python make-panel.py /folder/of/tiff --skip-merge`
+No merged image will be created.
 
 ### Rows
 The default puts on images on one row. You may specify the number of rows with `--rows`.
@@ -104,12 +115,6 @@ By default, a 20 µm scale bar is added to the bottom right of an image. You can
 `python make-panel.py /folder/of/tiff --bar-microns=10`
 This will add a 10 µm scale bar.
 
-### Merged image
-By default, all images are combined into a color merge. If you don’t want to make a merged image, use `--skip-merge`.
-
-`python make-panel.py /folder/of/tiff --skip-merge`
-No merged image will be created.
-
 ### Padding
 By default, 10 px of white space are added between each image. You can change this with `--padding`.
 
@@ -122,8 +127,7 @@ By default, the how many pixels correspond to a micron are detected from the ima
 `python make-panel.py /folder/of/tiff --pixels-per-micron=0.577`
 The scale bar will be adjusted assuming that 1 µm = 0.577 px.
 
-
-### Help
+## Help
 If you need help, you can run:
 `python make-panel.py --help`
 
