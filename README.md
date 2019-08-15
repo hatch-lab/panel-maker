@@ -85,7 +85,7 @@ The default labels for each image are simply numbers: 1, 2, … To specify your 
 This will set the first image’s label to DAPI, the second to GFP, and third to TagRFP.
 
 ### Colors
-If your panel has a merged image (the default), you can specify the colors with `--hues`. The default hues are 180º, 58º, 300º, and 0º. If you have more than four images, the rest will default to 0º.
+If your panel has a merged image (the default), you can specify the colors with `--hues`. The default hues are 180º, 58º, 300º. If you have more than three images, the rest will default to white.
 
 The use of degrees corresponds to HSV color hue. You can use: http://hslpicker.com to find angles.
 
