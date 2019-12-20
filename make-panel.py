@@ -4,7 +4,7 @@
 Converts a set of 3 or 4 TIFFs into a figure-ready panel
 
 Usage:
-  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--hues=<int>... | --hue=<int>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--skip-merge] [--padding=10]
+  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20]
 
 Arguments:
   INPUT_DIR  The path where the images are
@@ -14,13 +14,15 @@ Options:
   --min=<int>  [default: 0]
   --max=<int>  [default: 255]
   --label=<string>  The label. Defaults to 1, 2, 3, ...
-  --hue=<int>  If supplied, will be used for all panels; overrides hues.
-  --hues=<int>  [default: 180 58 300 -1] The hues to use for the merged image. Can be between 0-360, corresponding to the HSV color wheel
+  --colors=<string>  If supplied, will be used for all panels; overrides hues.
+  --color=<string>  [default: (255,0,255) (255,255,0) (0,255,255) (150,150,150)] The hues to use for the merged image. 
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Pixels per micron.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
+  --merge-label=<string>  [default: Merged] The label to use for the merged image
   --skip-merge  Whether to skip a merge panel
   --padding=<int>  [default: 10] The number of pixels between each panel
+  --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar from bottom right
 
 Output:
   A TIFF file
@@ -34,9 +36,12 @@ from docopt import docopt
 import numpy as np
 import cv2
 import math
+from ast import literal_eval
 
 from PIL import Image, ImageDraw, ImageFont
 from tifffile import tifffile
+
+from skimage import exposure
 
 import json
 
@@ -50,12 +55,14 @@ schema = Schema({
   '--min': [ And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0') ],
   '--max': [ And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0') ],
   '--label': lambda x: len(x) >= 0,
-  '--hue': Or(None, And(Use(int), lambda n: -1 <= n <= 360, error='--hue must be an integer between 0 and 360')),
-  '--hues': [ And(Use(int), lambda n: -1 <= n <= 360, error='--hues must be an integer between 0 and 360') ],
+  '--merge-label': lambda x: len(x) >= 0,
+  '--colors': Or(None, lambda x: len(x) >= 0),
+  '--color': [ And(Use(literal_eval), lambda x: len(x) == 3 and 0 <= x[0] <= 255 and 0 <= x[1] <= 255 and 0 <= x[2] <= 255 ) ],
   '--rows': And(Use(int), lambda n: 0 < n, error='--rows must be an integer greater than or equal to 1'),
   '--pixels-per-um': Or(None, Use(float, error="pixels-per-um does not appear to be a number" )),
   '--bar-microns': And(Use(int), lambda n: 1 < n, error="--bar-microns must be an integer greater than 0"),
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
+  '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   Optional('--skip-merge'): bool
 })
 
@@ -76,16 +83,17 @@ pixels_per_micron = float(arguments['--pixels-per-um']) if arguments['--pixels-p
 bar_microns = int(arguments['--bar-microns'])
 skip_merge = bool(arguments['--skip-merge'])
 panel_padding = int(arguments['--padding'])
+bar_padding = int(arguments['--bar-padding'])
 
 min_threshold = [ int(x) for x in arguments['--min'] ]
 max_threshold = [ int(x) for x in arguments['--max'] ]
 
 labels = arguments['--label'] if len(arguments['--label']) > 0 else list(range(len(tiff_paths)))
 
-if arguments['--hue'] is not None:
-  hues = [ int(arguments['--hue']) ]*len(tiff_paths)
+if arguments['--colors'] is not None:
+  colors = [ literal_eval(arguments['--colors']) ]*len(tiff_paths)
 else:
-  hues = [ int(x) for x in arguments['--hues'] ]
+  colors = [ ( int(color[0]), int(color[1]), int(color[2]) ) for color in arguments['--color'] ]
 
 def fill_list(val, min_len, default):
   diff = min_len - len(val)
@@ -97,10 +105,9 @@ def fill_list(val, min_len, default):
 min_threshold = fill_list(min_threshold, len(tiff_paths), 0)
 max_threshold = fill_list(max_threshold, len(tiff_paths), 255)
 labels = fill_list(labels, len(tiff_paths), "")
-hues = fill_list(hues, len(tiff_paths), 0)
+colors = fill_list(colors, len(tiff_paths), ( 150, 150, 150 ))
 
-# CV2 uses angles 0-179
-hues = [ int(math.floor(x/2)) if x != -1 else -1 for x in arguments['--hues'] ]
+merge_label = arguments['--merge-label']
 
 font_path = Path("Roboto-Bold.ttf").resolve()
 
@@ -126,75 +133,41 @@ if pixels_per_micron is None:
     elif dtype == '2I':
       # Convert from meters to microns
       pixels_per_micron = pixels_per_micron*1E-6
-
-
-# Rescale
-for key in range(len(images)):
-  px_min = min_threshold[key]
-  px_max = max_threshold[key]
-  img = images[key]
-  img[(img < px_min)] = px_min
-  img[(img > px_max)] = px_max
-  img = 255*((img-np.min(img))/(np.max(img)-np.min(img)))
-  images[key] = img.astype(np.uint8)
+else:
+  dtype = '2I'
 
 
 ## Convert everything to RGB so we're in a consisitent color space
 images = [ cv2.cvtColor(x, cv2.COLOR_GRAY2BGR) for x in images ]
 
 
+## Rescale
+for key in range(len(images)):
+  px_min = min_threshold[key]
+  px_max = max_threshold[key]
+  img = images[key]*1.0
+  images[key] = exposure.rescale_intensity(img, in_range=(px_min, px_max))
+
+
 ## Create merged image
 if not skip_merge:
-  merge_images = [ cv2.cvtColor(x, cv2.COLOR_BGR2HSV) for x in images ]
-  bw_images = []
+  merge_images = []
 
-  for key in range(len(merge_images)):
-    img = merge_images[key]
-    if key < len(hues) and hues[key] != -1:
-      img[...,0] = hues[key]
-      img[...,1] = 255
-    else:
-      bw_images.append(images[key])
-      continue
+  for key in range(len(images)):
+    img = images[key].copy()
+    img[...,0] *= colors[key][0]
+    img[...,1] *= colors[key][1]
+    img[...,2] *= colors[key][2]
+
+    merge_images.append(img.astype(np.uint8))
       
-
   # Blend
-  # Find new angle/mag at each px
-  merged = np.zeros(merge_images[0].shape)
-  x = np.zeros(merge_images[0].shape[:2])
-  y = x.copy()
-  mag = x.copy()
-
-  vrad = np.vectorize(math.radians)
-  vdeg = np.vectorize(math.degrees)
-  vcos = np.vectorize(math.cos)
-  vsin = np.vectorize(math.sin)
-  vsqrt = np.vectorize(math.sqrt)
-  vatan2 = np.vectorize(math.atan2)
-
+  merged = np.zeros(merge_images[0].shape, dtype=merge_images[0].dtype)
   for img in merge_images:
-    x += (img[...,2]*vcos(vrad(img[...,0])))
-    y += (img[...,2]*vsin(vrad(img[...,0])))
+    merged = cv2.add(img, merged)
 
-  angle = vdeg(vatan2(y,x))
-  angle[(angle < 0)] = 0
-  angle[(angle > 179)] = 179
-  mag = vsqrt(x**2+y**2)
-  mag[(mag < 0)] = 0
-  mag[(mag > 255)] = 255
-
-  merged[...,0] = angle
-  merged[...,1] = 255
-  merged[...,2] = mag
-
-  merged = cv2.cvtColor(merged.astype(np.uint8), cv2.COLOR_HSV2BGR)
-
-  weight = 1/len(images)
-  merged_weight = 1-weight
-  for img in bw_images:
-    merged = cv2.add(img,merged)
-
-  images = images + [ merged ]
+images = [ (255*img).astype(np.uint8) for img in images ]
+images = images + [ merged ] if not skip_merge else images
 
 
 ## Generate panels
@@ -227,7 +200,7 @@ for img in images:
 
 
 ## Add scale bar
-bar_padding = panel_padding+20
+bar_padding += panel_padding
 bar_height = 10
 
 bar_width = int(pixels_per_micron*bar_microns)
@@ -244,7 +217,7 @@ draw = ImageDraw.Draw(combined)
 font = ImageFont.truetype(str(font_path), size=45)
 x = panel_padding + 20
 y = panel_padding + 20
-labels = labels + ["Merged"]
+labels = labels + [merge_label]
 
 this_col = 0
 this_row = 0
