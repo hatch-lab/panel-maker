@@ -15,7 +15,7 @@ Options:
   --max=<int>  [default: 255]
   --label=<string>  The label. Defaults to 1, 2, 3, ...
   --colors=<string>  If supplied, will be used for all panels; overrides hues.
-  --color=<string>  [default: (255,0,255) (255,255,0) (0,255,255) (150,150,150)] The hues to use for the merged image. 
+  --color=<string>  [default: (255,0,255) (255,255,0) (0,255,255)] The hues to use for the merged image. 
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Pixels per micron.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
@@ -95,17 +95,17 @@ if arguments['--colors'] is not None:
 else:
   colors = [ ( int(color[0]), int(color[1]), int(color[2]) ) for color in arguments['--color'] ]
 
-def fill_list(val, min_len, default):
+def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
   if diff > 0:
-    val = val + [default]*diff
+    val = ([default]*diff + val) if end is "start" else (val + [default]*diff)
 
   return val
 
 min_threshold = fill_list(min_threshold, len(tiff_paths), 0)
 max_threshold = fill_list(max_threshold, len(tiff_paths), 255)
 labels = fill_list(labels, len(tiff_paths), "")
-colors = fill_list(colors, len(tiff_paths), ( 150, 150, 150 ))
+colors = fill_list(colors, len(tiff_paths), ( 150, 150, 150 ), "start")
 
 merge_label = arguments['--merge-label']
 
@@ -155,9 +155,10 @@ if not skip_merge:
 
   for key in range(len(images)):
     img = images[key].copy()
-    img[...,0] *= colors[key][0]
+    # Our colors are R,G,B, but CV2 is B,G,R
+    img[...,0] *= colors[key][2]
     img[...,1] *= colors[key][1]
-    img[...,2] *= colors[key][2]
+    img[...,2] *= colors[key][0]
 
     merge_images.append(img.astype(np.uint8))
       
