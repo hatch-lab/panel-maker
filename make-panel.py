@@ -4,7 +4,7 @@
 Converts a set of 3 or 4 TIFFs into a figure-ready panel
 
 Usage:
-  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20]
+  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45]
 
 Arguments:
   INPUT_DIR  The path where the images are
@@ -23,6 +23,7 @@ Options:
   --skip-merge  Whether to skip a merge panel
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar from bottom right
+  --font-size=<int>  [default: 45] The font size in points
 
 Output:
   A TIFF file
@@ -63,6 +64,7 @@ schema = Schema({
   '--bar-microns': And(Use(int), lambda n: 1 < n, error="--bar-microns must be an integer greater than 0"),
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
+  '--font-size': And(Use(int), lambda n: 1 < n, error="--font-size must be greater than 1"),
   Optional('--skip-merge'): bool
 })
 
@@ -84,6 +86,7 @@ bar_microns = int(arguments['--bar-microns'])
 skip_merge = bool(arguments['--skip-merge'])
 panel_padding = int(arguments['--padding'])
 bar_padding = int(arguments['--bar-padding'])
+font_size = int(arguments['--font-size'])
 
 min_threshold = [ int(x) for x in arguments['--min'] ]
 max_threshold = [ int(x) for x in arguments['--max'] ]
@@ -215,21 +218,21 @@ combined = cv2.rectangle(combined, pt1, pt2, (255,255,255), -1)
 combined = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
 draw = ImageDraw.Draw(combined)
 
-font = ImageFont.truetype(str(font_path), size=45)
+font = ImageFont.truetype(str(font_path), size=font_size)
 x = panel_padding + 20
 y = panel_padding + 20
 labels = labels + [merge_label]
 
 this_col = 0
-this_row = 0
 for label in labels:
+  label = str(label).replace("\\n", "\n")
   draw.text((x, y), str(label), fill='rgb(255,255,255)', font=font)
   this_col += 1
 
   if this_col == num_cols:
     this_col = 0
     x = panel_padding+20
-    y += panel_height+panel_padding+20
+    y += panel_height+panel_padding
   else:
     x += panel_width+panel_padding
 
