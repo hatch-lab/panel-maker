@@ -2,7 +2,7 @@
 
 ## Installation
 
-```
+```bash
 git clone https://github.com/hatch-lab/panel-maker
 python3 -m venv .venv
 source .venv/bin/activate
@@ -14,7 +14,9 @@ pip install -r requirements.txt
 The basic usage pattern is to have a folder of individual TIFF files. This tool will combine those images into a single panel and, by default, generate a merged image. Images will be added left-to-right, top-to-bottom in alphabetical order.
 
 ### Basic usage
-`python make-panel.py /folder/of/tiff`
+```bash
+python make-panel.py /folder/of/tiff
+```
 
 Output are 3 files: `panel.tif`, `panel.jpg`, and `meta.json`. The first two are TIFF and JPEG versions of your panel, and the last is a text file containing information about how the panel was generated.
 
@@ -54,30 +56,40 @@ No merged image will be created.
 ### Rows
 The default puts on images on one row. You may specify the number of rows with `--rows`.
 
-`python make-panel.py /folder/of/tiff --rows=2`
+```bash
+python make-panel.py /folder/of/tiff --rows=2
+```
 This will arrange images onto 2 rows.
 
 ### Scale bar
 By default, a 20 µm scale bar is added to the bottom right of an image. You can specify the width of the scale bar with `bar-microns`.
 
-`python make-panel.py /folder/of/tiff --bar-microns=10`
+```bash
+python make-panel.py /folder/of/tiff --bar-microns=10
+```
 This will add a 10 µm scale bar.
 
 ### Padding
 By default, 10 px of white space are added between each image. You can change this with `--padding`.
 
-`python make-panel.py /folder/of/tiff --padding=0`
+```bash
+python make-panel.py /folder/of/tiff --padding=0
+```
 Images will have no white space between them.
 
 ### Pixels per micron
 By default, the how many pixels correspond to a micron are detected from the images metadata. However, this may not always be accurate. To specify the pixels/micron directly, use `--pixels-per-um`.
 
-`python make-panel.py /folder/of/tiff --pixels-per-micron=0.577`
+```bash
+python make-panel.py /folder/of/tiff --pixels-per-micron=0.577
+```
 The scale bar will be adjusted assuming that 1 µm = 0.577 px.
 
 ## Help
 If you need help, you can run:
-`python make-panel.py --help`
+```bash
+python make-panel.py --help
+```
 
 
 
