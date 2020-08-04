@@ -4,7 +4,7 @@
 Converts a set of 3 or 4 TIFFs into a figure-ready panel
 
 Usage:
-  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45]
+  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45] [--invert]
 
 Arguments:
   INPUT_DIR  The path where the images are
@@ -21,6 +21,7 @@ Options:
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
   --merge-label=<string>  [default: Merged] The label to use for the merged image
   --skip-merge  Whether to skip a merge panel
+  --invert  Whether to invert the final image
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar from bottom right
   --font-size=<int>  [default: 45] The font size in points
@@ -42,7 +43,7 @@ from ast import literal_eval
 from PIL import Image, ImageDraw, ImageFont
 from tifffile import tifffile
 
-from skimage import exposure
+from skimage import exposure, util
 
 import json
 
@@ -65,7 +66,8 @@ schema = Schema({
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--font-size': And(Use(int), lambda n: 1 < n, error="--font-size must be greater than 1"),
-  Optional('--skip-merge'): bool
+  Optional('--skip-merge'): bool,
+  Optional('--invert'): bool
 })
 
 try:
@@ -84,6 +86,7 @@ num_rows = int(arguments['--rows'])
 pixels_per_micron = float(arguments['--pixels-per-um']) if arguments['--pixels-per-um'] else None
 bar_microns = int(arguments['--bar-microns'])
 skip_merge = bool(arguments['--skip-merge'])
+invert = bool(arguments['--invert'])
 panel_padding = int(arguments['--padding'])
 bar_padding = int(arguments['--bar-padding'])
 font_size = int(arguments['--font-size'])
@@ -203,6 +206,14 @@ for img in images:
     x += panel_width+panel_padding
 
 
+## Invert if necessary
+text_color = "(255,255,255)"
+if invert:
+  combined = util.invert(combined)
+  text_color = "(0,0,0)"
+
+bar_color = literal_eval(text_color)
+
 ## Add scale bar
 bar_padding += panel_padding
 bar_height = 10
@@ -211,8 +222,7 @@ bar_width = int(pixels_per_micron*bar_microns)
 
 pt1 = (combined.shape[1]-bar_padding-bar_width, combined.shape[0]-bar_padding)
 pt2 = (combined.shape[1]-bar_padding, combined.shape[0]-bar_padding-bar_height)
-combined = cv2.rectangle(combined, pt1, pt2, (255,255,255), -1)
-
+combined = cv2.rectangle(combined, pt1, pt2, bar_color, -1)
 
 ## Now add text, meta-data
 combined = Image.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
@@ -226,7 +236,7 @@ labels = labels + [merge_label]
 this_col = 0
 for label in labels:
   label = str(label).replace("\\n", "\n")
-  draw.text((x, y), str(label), fill='rgb(255,255,255)', font=font)
+  draw.text((x, y), str(label), fill='rgb' + text_color, font=font)
   this_col += 1
 
   if this_col == num_cols:
@@ -246,9 +256,12 @@ combined.save(str(output_dir / "panel.tiff"), tiffinfo=tiff_info)
 combined.save(str(output_dir / "panel.jpg"))
 
 with open(str((output_dir / "meta.json")), "w") as fp:
-  fp.write(json.dumps({ 
-    "min_threshold": min_threshold, 
-    "max_threshold": max_threshold,
+  fp.write(json.dumps({
+    "labels": labels,
+    "mins": min_threshold, 
+    "maxs": max_threshold,
+    "colors": colors,
     "bar_microns": bar_microns,
-    "resolution": str(pixels_per_micron) + " px / um"
+    "resolution": str(pixels_per_micron) + " px / um",
+    "inverted": invert
   }))
