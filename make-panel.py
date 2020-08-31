@@ -4,7 +4,7 @@
 Converts a set of 3 or 4 TIFFs into a figure-ready panel
 
 Usage:
-  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45] [--invert]
+  make-panel.py INPUT_DIR [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45] [--invert] [--ortho=<string>]
 
 Arguments:
   INPUT_DIR  The path where the images are
@@ -25,6 +25,7 @@ Options:
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar from bottom right
   --font-size=<int>  [default: 45] The font size in points
+  --ortho=<str>  Optional. If making an orthogonal projection, the x,y frames to center the projection on. Folders should be organized such that xy, xz, and yz folders are in the so-named directory.
 
 Output:
   A TIFF file
@@ -51,8 +52,7 @@ from schema import Schema, And, Or, Use, SchemaError, Optional
 
 ## Process inputs
 arguments = docopt(__doc__, version='1.0')
-
-schema = Schema({
+schema_def = {
   'INPUT_DIR': os.path.exists,
   '--min': [ And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0') ],
   '--max': [ And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0') ],
@@ -67,8 +67,88 @@ schema = Schema({
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--font-size': And(Use(int), lambda n: 1 < n, error="--font-size must be greater than 1"),
   Optional('--skip-merge'): bool,
-  Optional('--invert'): bool
-})
+  Optional('--invert'): bool,
+  '--ortho': Or(None, And(Use(literal_eval), lambda x: len(x) == 3 and 0 <= x[0] and 0 <= x[1] and 0 <= x[2]))
+}
+
+schema = Schema(schema_def)
+
+def make_orthogonals(ortho, img_dir, padding, pixels_per_micron):
+  x_idx = str(ortho[0])
+  y_idx = str(ortho[1])
+  z_idx = str(ortho[2])
+  xy_paths = list((img_dir / "xy").glob("*_z*" + z_idx + "_c*.tif"))
+  xz_paths = list((img_dir / "xz").glob("*_z*" + y_idx + "_c*.tif"))
+  yz_paths = list((img_dir / "yz").glob("*_z*" + x_idx + "_c*.tif"))
+
+  xy_paths.sort()
+  xz_paths.sort()
+  yz_paths.sort()
+
+  ## Get images
+  xy_images = [ cv2.imread(str(x), cv2.IMREAD_GRAYSCALE) for x in xy_paths if x ]
+  xz_images = [ cv2.imread(str(x), cv2.IMREAD_GRAYSCALE) for x in xz_paths if x ]
+  yz_images = [ cv2.imread(str(x), cv2.IMREAD_GRAYSCALE) for x in yz_paths if x ]
+
+  if len(xy_images) <= 0 or len(xz_images) <= 0 or len(yz_images) <= 0:
+    print("Couldn't find orthogonal slices in " + str(img_dir))
+    exit(1)
+
+  if len(xy_images) != len(xz_images) or len(xy_images) != len(yz_images):
+    print("Length of xy, xz, and yz images are different")
+    exit(1)
+
+  # Get resolution
+  if pixels_per_micron is None:
+    with tifffile.TiffFile(str(xy_paths[0])) as img:
+      pixels_per_micron = img.pages[0].tags['XResolution'].value
+      if len(pixels_per_micron) == 2:
+        pixels_per_micron = pixels_per_micron[0]
+      dtype = img.pages[0].tags['XResolution'].dtype
+
+      if dtype == '1I':
+        # Convert from inches to microns
+        pixels_per_micron = pixels_per_micron*3.937E-5
+      elif dtype == '2I':
+        # Convert from meters to microns
+        pixels_per_micron = pixels_per_micron*1E-6
+  else:
+    dtype = '2I'
+
+  tiff_info = {
+    282: pixels_per_micron/1E-6,
+    283: pixels_per_micron/1E-6,
+    296: int(dtype[0])
+  }
+
+  ## Make images
+  # Add xz to bottom of xy
+  height = xy_images[0].shape[0] + padding + xz_images[0].shape[0]
+  width = xy_images[0].shape[1] + padding + yz_images[0].shape[1]
+
+  for key in range(len(xy_images)):
+    combined = np.zeros(( height, width )).astype(np.uint8)
+    combined[:] = 255
+
+    # Draw a line
+    gap_size = round(4*pixels_per_micron) # 5 um gap
+    xy_images[key][0:ortho[1]-gap_size,ortho[0]] = 255
+    xy_images[key][ortho[1]+gap_size:,ortho[0]] = 255
+    xy_images[key][ortho[1],0:ortho[0]-gap_size] = 255
+    xy_images[key][ortho[1],ortho[0]+gap_size:] = 255
+
+    combined[0:xy_images[0].shape[0], 0:xy_images[0].shape[1]] = xy_images[key]
+    combined[(xy_images[0].shape[0]+padding):height,0:xy_images[0].shape[1]] = xz_images[key]
+    combined[0:xy_images[0].shape[0],(xy_images[0].shape[1]+padding):width] = yz_images[key]
+
+    ## Now add text, meta-data
+    combined = Image.fromarray(combined)
+    file_name = str(key) + ".tif"
+
+    combined.save(str(img_dir / file_name), tiffinfo=tiff_info)
+
+  return xz_images[0].shape[0]
+
 
 try:
   arguments = schema.validate(arguments)
@@ -78,9 +158,6 @@ except SchemaError as error:
 
 img_dir = Path(arguments['INPUT_DIR']).resolve()
 output_dir = img_dir
-
-tiff_paths = list(img_dir.glob("*.tif"))
-tiff_paths.sort()
 
 num_rows = int(arguments['--rows'])
 pixels_per_micron = float(arguments['--pixels-per-um']) if arguments['--pixels-per-um'] else None
@@ -93,6 +170,14 @@ font_size = int(arguments['--font-size'])
 
 min_threshold = [ int(x) for x in arguments['--min'] ]
 max_threshold = [ int(x) for x in arguments['--max'] ]
+
+ortho = arguments['--ortho']
+
+if ortho is not None:
+  bar_padding += make_orthogonals(ortho, img_dir, panel_padding, pixels_per_micron)
+
+tiff_paths = list(img_dir.glob("*.tif"))
+tiff_paths.sort()
 
 labels = arguments['--label'] if len(arguments['--label']) > 0 else list(range(len(tiff_paths)))
 
@@ -123,7 +208,7 @@ images = [ cv2.imread(str(x), cv2.IMREAD_GRAYSCALE) for x in tiff_paths if x ]
 
 if len(images) <= 0:
   print(arguments)
-  exit()
+  exit(1)
 
 # Get resolution
 if pixels_per_micron is None:
@@ -247,8 +332,8 @@ for label in labels:
     x += panel_width+panel_padding
 
 tiff_info = {
-  282: pixels_per_micron*1E-6,
-  283: pixels_per_micron*1E-6,
+  282: pixels_per_micron/1E-6,
+  283: pixels_per_micron/1E-6,
   296: int(dtype[0])
 }
 
@@ -263,5 +348,6 @@ with open(str((output_dir / "meta.json")), "w") as fp:
     "colors": colors,
     "bar_microns": bar_microns,
     "resolution": str(pixels_per_micron) + " px / um",
-    "inverted": invert
+    "inverted": invert,
+    "ortho": ortho
   }))
