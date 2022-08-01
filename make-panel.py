@@ -4,7 +4,7 @@
 Converts a set of 3 or 4 TIFFs into a figure-ready panel
 
 Usage:
-  make-panel.py INPUT_DIR... [--out=<str>] [--ortho=<str>...] [--min=<int>...] [--max=<int>...] [--label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45] [--invert]
+  make-panel.py INPUT_DIR... [--out=<str>] [--ortho=<str>...] [--min=<int>...] [--max=<int>...] [--label=<string>...] [--input-label=<string>...] [--color=<str>... | --colors=<str>] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=20] [--font-size=45] [--invert]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
@@ -14,6 +14,7 @@ Options:
   --min=<int>  [default: 0]
   --max=<int>  [default: 255]
   --label=<string>  The label. Defaults to 1, 2, 3, ...
+  --input-label=<string>  Optional. Will be prepended to the first label of each row.
   --colors=<string>  If supplied, will be used for all panels; overrides hues.
   --color=<string>  [default: (255,0,255) (255,255,0) (0,255,255)] The hues to use for the merged image. 
   --rows=<int>  [default: 1] Number of rows we should have in our panel
@@ -59,12 +60,13 @@ schema_def = {
   '--min': [ And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0') ],
   '--max': [ And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0') ],
   '--label': lambda x: len(x) >= 0,
+  '--input-label': [ Or(None, lambda x: len(x) >= 0) ],
   '--merge-label': lambda x: len(x) >= 0,
   '--colors': Or(None, lambda x: len(x) >= 0),
   '--color': [ And(Use(literal_eval), lambda x: len(x) == 3 and 0 <= x[0] <= 255 and 0 <= x[1] <= 255 and 0 <= x[2] <= 255 ) ],
   '--rows': And(Use(int), lambda n: 0 < n, error='--rows must be an integer greater than or equal to 1'),
-  '--pixels-per-um': Or(None, Use(float, error="pixels-per-um does not appear to be a number" )),
-  '--bar-microns': And(Use(int), lambda n: 1 < n, error="--bar-microns must be an integer greater than 0"),
+  '--pixels-per-um': Or(None, And(Use(float), lambda n: 0< n, error="pixels-per-um does not appear to be a number" )),
+  '--bar-microns': And(Use(int), lambda n: 1 <= n, error="--bar-microns must be an integer greater than 0"),
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--font-size': And(Use(int), lambda n: 1 < n, error="--font-size must be greater than 1"),
@@ -276,7 +278,7 @@ def make_panel(img_dir, min_threshold, max_threshold, labels, merge_label, color
 def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
   if diff > 0:
-    val = ([default]*diff + val) if end is "start" else (val + [default]*diff)
+    val = ([default]*diff + val) if end == "start" else (val + [default]*diff)
 
   return val
 
@@ -292,7 +294,6 @@ def save_panel(output_dir, img, info):
 
   with open(str((output_dir / "meta.json")), "w") as fp:
     fp.write(json.dumps(info))
-
 
 try:
   arguments = schema.validate(arguments)
@@ -330,6 +331,7 @@ tiff_paths = list(img_dirs[0].glob("*.tif"))
 tiff_paths.sort()
 
 labels = arguments['--label'] if len(arguments['--label']) > 0 else list(range(len(tiff_paths)))
+input_labels = arguments['--input-label'] if len(arguments['--input-label']) > 0 else None
 
 if arguments['--colors'] is not None:
   colors = [ literal_eval(arguments['--colors']) ]*len(tiff_paths)
@@ -363,11 +365,13 @@ if pixels_per_micron is None:
     if dtype == '1I':
       # Convert from inches to microns
       pixels_per_micron = pixels_per_micron*3.937E-5
-    elif dtype == '2I':
+    else:
       # Convert from meters to microns
       pixels_per_micron = pixels_per_micron*1E-6
+      dtype = '2I'
 else:
   dtype = '2I'
+
 
 # Get panel-specific info
 orthos = arguments['--ortho']
@@ -375,6 +379,7 @@ orthos = arguments['--ortho']
 ## Make panels
 info = {
   "labels": labels,
+  "input_labels": input_labels,
   "min_threshold": min_threshold, 
   "max_threshold": max_threshold,
   "colors": colors,
@@ -395,7 +400,14 @@ panels = []
 # First panel needs labels
 if len(orthos) > 0:
   make_orthogonals(orthos[0], img_dirs[0], info)
-panels.append(make_panel(img_dirs[0], **info))
+
+_labels = info['labels']
+_merge_label = info['merge_label']
+if input_labels is not None and len(input_labels) >= 1:
+  _labels = [ "\n" + s for s in info['labels'] ]
+  _labels[0] = info['input_labels'][0] + "\n" + info['labels'][0]
+  _merge_label = "\n" + _merge_label
+panels.append(make_panel(img_dirs[0], **{**info, 'labels': _labels, 'merge_label': _merge_label}))
 
 extra_bar_padding = 0
 for idx,img_dir in enumerate(img_dirs[1:]):
@@ -404,10 +416,14 @@ for idx,img_dir in enumerate(img_dirs[1:]):
    extra_bar_padding = make_orthogonals(orthos[key], img_dirs[key], info)
 
   # Don't print labels on subsequent panels
-  panels.append(make_panel(img_dirs[key], **{**info, 'labels':[], 'merge_label':''}))
+  _labels = []
+  if len(info['input_labels']) > key:
+    _labels = [ "" ] * len(info['labels'])
+    _labels[0] = info['input_labels'][key]
+  panels.append(make_panel(img_dirs[key], **{**info, 'labels':_labels, 'merge_label':''}))
+
 
 # Now assemble the panels
-
 # Convert from PIL back into numpy
 combined = np.array(panels[0])
 for panel in panels[1:]:
