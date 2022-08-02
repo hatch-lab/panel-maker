@@ -5,17 +5,17 @@ Converts sets of TIFFs into a figure-ready panel
 
 Usage:
   make-panel.py INPUT_DIR... 
-  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--n-channels=None]
+  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
 
 Options:
   -h --help  Show this screen.
-  --min=<int> [default: None]
-  --max=<int> [default: None]
+  --min=<int>
+  --max=<int>
   --channel=<string>  Optional. The label for the channel.
-  --label=<string>  Optional. The label of each set of images.
+  --label=<string>  Optional. The label of each set of images, or one label for all sets of images
   --color=<string>  The hues to use for the merged image. Defaults to yellow, magenta, turq, cyan.
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Optional. Pixels per micron. Will attempt to extract this from the first TIFF found.
@@ -24,14 +24,17 @@ Options:
   --skip-merge  Whether to skip a merge panel
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar
-  --label-font-size=<int>  The font size in points
-  --channel-font-size=<int>  The font size in points
-  --bar-font-size=<int>  The font size in points
   --out=<str>  Required only if more than one INPUT_DIR is present. The output directory where the final TIFF is to be written.
   --zoom=<float>  [default: 1] If images should be zoomed in and cropped.
   --zoom-anchor=<str>  [default: mm] If zooming, whether to zoom in from the lt, lm, lr, mt, mm, mr, bt, bm, br (left-top, left-middle, left-right, middle-top, and so forth)
-  --n-channels=<int> [default: None] Instead of detecting the number of channels, specify it by hand
-  --skip=<int> [default: None] Channel to skip, indexed by 1
+  --n-channels=<int> Instead of detecting the number of channels, specify it by hand
+  --skip=<int> Channel to skip, indexed by 1
+  --annotate-gradient=<str>  Add an ascending gradient to the left (if set to l) or right of all input panels
+  --title=<str>  An overall title
+  --label-font-size=<int>  The font size in points
+  --channel-font-size=<int>  The font size in points
+  --title-font-size=<int>  The font size in points
+  --bar-font-size=<int>  The font size in points
 
 Output:
   A TIFF file
@@ -41,7 +44,7 @@ import os
 import re
 from pathlib import Path
 from docopt import docopt
-from lib import import_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity
+from lib import import_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
 import json
 from schema import Schema, And, Or, Use, SchemaError, Optional
 from tifffile import tifffile
@@ -79,20 +82,23 @@ schema_def = {
   '--channel': [ Or(None, lambda x: len(x) >= 0) ],
   '--label': [ Or(None, lambda x: len(x) >= 0) ],
   '--merge-label': lambda x: len(x) >= 0,
+  '--title': Or(None, lambda x: len(x) >= 0),
   '--color': [ Or(None, lambda x: len(x) >= 0) ],
   '--rows': And(Use(int), lambda n: 0 < n, error='--rows must be an integer greater than or equal to 1'),
   '--pixels-per-um': Or(None, And(Use(float), lambda n: 0< n, error="pixels-per-um does not appear to be a number" )),
   '--bar-microns': And(Use(int), lambda n: 1 <= n, error="--bar-microns must be an integer greater than 0"),
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
-  '--label-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--label-font-size must be greater than 1")),
-  '--channel-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--channel-font-size must be greater than 1")),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
   Optional('--skip-merge'): bool,
   '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
   '--zoom-anchor': [ lambda n: n in [ 'lt', 'lm', 'lb', 'mt', 'mm', 'mb', 'rt', 'rm', 'rb' ] ],
   '--n-channels': Or(None, And(Use(int), lambda n: 0 < n, error='--n-channels must be greater than 0')),
-  '--skip': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip must be greater than or equal to 1"))]
+  '--skip': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip must be greater than or equal to 1"))],
+  '--label-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--label-font-size must be greater than 1")),
+  '--channel-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--channel-font-size must be greater than 1")),
+  '--title-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--title-font-size must be greater than 1")),
+  '--annotate-gradient': Or(None, lambda n: n in [ 'l', 'r' ], error='--annotated-gradient must be "l" or "r"')
 }
 
 schema = Schema(schema_def)
@@ -171,7 +177,12 @@ max_thresholds = fill_list(max_thresholds, num_channels, None)
 # Label params
 channel_labels = fill_list(arguments['--channel'], num_channels, "")
 merge_label = arguments['--merge-label']
-labels = fill_list(arguments['--label'], len(img_dirs), "")
+label_title = None
+if len(arguments['--label']) == 1 and len(img_dirs) > 1:
+  labels = fill_list([], len(img_dirs), "")
+  label_title = arguments['--label'][0]
+else:
+  labels = fill_list(arguments['--label'], len(img_dirs), "")
 
 if arguments['--label-font-size'] is not None:
   label_font_size = int(arguments['--label-font-size'])
@@ -188,6 +199,11 @@ if arguments['--bar-font-size'] is not None:
 else:
   bar_font_size = int(50/1000*img_height*0.75)
 
+if arguments['--title-font-size'] is not None:
+  title_font_size = int(arguments['--title-font-size'])
+else:
+  title_font_size = int(100/1000*img_height*0.75)
+
 # Get the rest of the arguments
 num_rows = int(arguments['--rows'])
 bar_microns = int(arguments['--bar-microns'])
@@ -197,6 +213,9 @@ zoom = float(arguments['--zoom'])
 zoom_anchor = fill_list(arguments['--zoom-anchor'], len(img_dirs), arguments['--zoom-anchor'][0])
 skip_merge = bool(arguments['--skip-merge'])
 font_path = Path("./Roboto-Bold.ttf").resolve()
+add_triangle = arguments['--annotate-gradient']
+title = arguments['--title']
+
 
 
 if skip_merge:
@@ -234,9 +253,9 @@ for input_key, img_dir in enumerate(img_dirs):
         img = rescale_intensity(img, min_threshold, max_threshold)
 
     if is_first:
-      labelled_img = label_img(img, channel_label, color, channel_font_size, channel_font_height, font_path)
+      labelled_img = label_img(img, channel_label, color, channel_font_size, font_path, font_height=channel_font_height)
     else:
-      labelled_img = label_img(img, "", color, channel_font_size, 0, font_path)
+      labelled_img = label_img(img, "", color, channel_font_size, font_path, 0)
     
     imgs.append(labelled_img)
     to_merge.append(img)
@@ -244,9 +263,9 @@ for input_key, img_dir in enumerate(img_dirs):
   if not skip_merge:
     merged = merge_imgs(to_merge, colors)
     if is_first:
-      merged = label_img(merged, merge_label, (0,0,0), channel_font_size, channel_font_height, font_path)
+      merged = label_img(merged, merge_label, (0,0,0), channel_font_size, font_path, font_height=channel_font_height)
     else:
-      merged = label_img(merged, "", (0,0,0), channel_font_size, 0, font_path)
+      merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
     imgs.append(merged)
 
   panel = assemble_panel(imgs, num_rows=num_rows, padding=panel_padding, margin=0)
@@ -260,14 +279,20 @@ for input_key, img_dir in enumerate(img_dirs):
 
 img = assemble_panel(panels, num_rows=len(panels), margin=panel_padding, padding=0)
 
+if title is not None:
+  img = label_img(img, title, (0,0,0), font_path=font_path, font_size=title_font_size)
+
 # Add scale bar
 if pixels_per_um is not None:
   img = draw_scale_bar(img, (255,255,255), pixels_per_um, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
 
+if add_triangle is not None:
+  triangle_offset = channel_font_height + get_max_label_size([title], title_font_size, font_path)[1]
+  img = add_gradient_triangle(img, (0,0,0), position=add_triangle, height=channel_font_height, y_offset=triangle_offset, label=label_title, font_path=font_path, font_size=label_font_size, padding=panel_padding)
+
 # Save
 params = {
-  "channels": channel_labels,
-  "labels": labels,
+  "arguments": arguments,
   "min_thresholds": min_thresholds, 
   "max_thresholds": max_thresholds,
   "colors": colors,

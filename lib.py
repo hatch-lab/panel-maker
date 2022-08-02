@@ -81,6 +81,56 @@ def get_max_label_size(labels, font_size, font_path):
 
   return (font_width, font_height)
 
+def add_gradient_triangle(panel, color, height, y_offset, label=None, font_size=12, font_path=None, position='l', padding=20):
+  width = int(panel.size[1]-y_offset-(2*padding)) # The width is the height of the panel, less the font
+
+  # Pillow doesn't really anti-alias except on resizes, so we'll make it 2x bigger and shrink it :-/
+  tri = Image.new('RGB', ( 2*width, 2*height ), (255,255,255))
+
+  draw = ImageDraw.Draw(tri)
+  draw.polygon([ (0,0), (0, 2*height), (2*width, 2*height) ], fill=color)
+
+  tri = tri.resize(( width, height ), resample=Image.Resampling.LANCZOS)
+
+  if font_path is not None and label is not None:
+    font = ImageFont.truetype(str(font_path), size=font_size)
+    label = str(label).replace("\\n", "\n")
+    label_size = get_max_label_size([label], font_size, font_path)
+    lab = Image.new('RGB', (width, label_size[1]), (255,255,255))
+
+    lab_draw = ImageDraw.Draw(lab)
+
+    lab_draw.text(
+      (int(lab.size[0]/2),0), 
+      str(label), 
+      fill='rgb' + "(" + ",".join(map(str,color)) + ")", 
+      font=font,
+      anchor="ma",
+      align="m"
+    )
+
+    new_tri = Image.new('RGB', (width, height+lab.size[1]), (255,255,255))
+    new_tri.paste(tri, (0,lab.size[1]))
+    new_tri.paste(lab, (0,0))
+    tri = new_tri
+
+  if position == 'l':
+    tri = tri.rotate(90, expand=1)
+  else:
+    tri = tri.rotate(-90, expand=1)
+
+  new = Image.new('RGB', (panel.size[0]+padding+tri.size[0], panel.size[1]), (255,255,255))
+  if position == 'l':
+    # image is on the right
+    new.paste(tri, (0, y_offset+padding))
+    new.paste(panel, (tri.size[0], 0))
+  else:
+    # image is on the left
+    new.paste(panel, (0, 0))
+    new.paste(tri, (panel.size[0]+padding, y_offset+padding))
+
+  return new
+
 def label_panel(panel, label, color, font_size, font_width, font_path, position='l', padding=20, y_offset=None):
   y_offset = padding if y_offset is None else y_offset
   font = ImageFont.truetype(str(font_path), size=font_size)
@@ -172,7 +222,7 @@ Arguments:
 Output:
   PIL.Image
 """
-def label_img(img, label, color, font_size, font_height, font_path, position='tl'):
+def label_img(img, label, color, font_size, font_path, font_height=None, position='tl'):
   font = ImageFont.truetype(str(font_path), size=font_size)
   label = str(label).replace("\\n", "\n")
 
@@ -184,6 +234,9 @@ def label_img(img, label, color, font_size, font_height, font_path, position='tl
   }
 
   padding = int(font_size/9)
+
+  if font_height is None:
+    font_height = get_max_label_size([ label ], font_size, font_path)[1]
 
   font_height += padding
 
