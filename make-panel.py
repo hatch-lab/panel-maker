@@ -161,7 +161,7 @@ else:
   pixels_per_um = float(arguments['--pixels-per-um'])
 
 # Get color data
-default_colors = [ "yellow", "magenta", "turq", "blue" ]
+default_colors = [ "hatch-c4", "hatch-c3", "hatch-c2", "hatch-c1" ]
 colors = [ re.sub("[^a-zA-Z0-9]", "", color) for color in arguments['--color'] if Path("./luts/" + re.sub("[^a-zA-Z0-9]", "", color) + ".lut").exists()  ]
 if len(colors) < num_channels:
   colors.extend(default_colors[(4-num_channels-len(colors)):4])
