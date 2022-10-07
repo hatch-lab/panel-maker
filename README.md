@@ -114,7 +114,7 @@ If you have multiple inputs, you can specify multiple `zoom-anchor` values:
 python make-panel.py /folder/of/tiff /folder/of/tiff2 --out=/combined --channel="TagRFP" --channel="GFP" --channel="DAPI" --zoom=1.5 --zoom-anchor=rt --zoom-anchor=lb
 ```
 
-### Pixels per micron
+#### Pixels per micron
 By default, the pixel to micron conversion ratio is extracted from the first TIFF’s metadata. However, this may not always be accurate. To specify the pixels/micron directly, use `--pixels-per-um`.
 
 ```bash
