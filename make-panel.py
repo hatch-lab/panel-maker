@@ -76,7 +76,7 @@ def get_tiff_paths(parent_path, skips):
 arguments = docopt(__doc__, version='1.0')
 schema_def = {
   'INPUT_DIR': [ os.path.exists ],
-  '--out': Or(None, os.path.exists),
+  '--out': Or(None, And(Use(os.path.expanduser), os.path.exists, error='--out does not exist')),
   '--min': [ Or(None, And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0')) ],
   '--max': [ Or(None, And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0')) ],
   '--channel': [ Or(None, lambda x: len(x) >= 0) ],
