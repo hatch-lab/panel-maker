@@ -367,7 +367,7 @@ def crop_img(img, factor, anchor='mm'):
 
   return new
 
-def draw_scale_bar(img, color, pixels_per_um, font_path=None, font_size=12, bar_width=20, bar_height=2, bar_padding=40, anchor='rb'):
+def draw_scale_bar(img, color, pixels_per_um, zoom=1, font_path=None, font_size=12, bar_width=20, bar_height=2, bar_padding=40, anchor='rb'):
   if font_path is not None:
     font = ImageFont.truetype(str(font_path), size=font_size)
     label = str(bar_width) + " µm"
@@ -375,7 +375,7 @@ def draw_scale_bar(img, color, pixels_per_um, font_path=None, font_size=12, bar_
   width = img.size[0]
   height = img.size[1]
 
-  bar_width = int(bar_width*pixels_per_um)
+  bar_width = int(bar_width*pixels_per_um)*zoom
   bar_height = int(bar_height*pixels_per_um) if height > 500 else 8
   bar_padding = bar_padding
 

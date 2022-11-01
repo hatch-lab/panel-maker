@@ -50,6 +50,7 @@ from schema import Schema, And, Or, Use, SchemaError, Optional
 from tifffile import tifffile
 import defusedxml.ElementTree as ET
 import numpy as np
+import cv2
 
 def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
@@ -158,6 +159,10 @@ if arguments['--pixels-per-um'] is None:
         pixels_per_um = pixels_per_um[0]/pixels_per_um[1]
 
 else:
+  with tifffile.TiffFile(tiff_paths[0]) as tif:
+    img = tif.pages[0].asarray()
+    img_width = img.shape[1]
+    img_height = img.shape[0]
   pixels_per_um = float(arguments['--pixels-per-um'])
 
 # Get color data
@@ -212,7 +217,7 @@ bar_padding = int(arguments['--bar-padding'])
 zoom = float(arguments['--zoom'])
 zoom_anchor = fill_list(arguments['--zoom-anchor'], len(img_dirs), arguments['--zoom-anchor'][0])
 skip_merge = bool(arguments['--skip-merge'])
-font_path = Path("./Roboto-Bold.ttf").resolve()
+font_path = (Path(__file__).parent / "fonts/Geogrotesque-SemiBold.ttf").resolve()
 add_triangle = arguments['--annotate-gradient']
 title = arguments['--title']
 
@@ -284,7 +289,7 @@ if title is not None:
 
 # Add scale bar
 if pixels_per_um is not None:
-  img = draw_scale_bar(img, (255,255,255), pixels_per_um, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
+  img = draw_scale_bar(img, (255,255,255), pixels_per_um, zoom = zoom, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
 
 if add_triangle is not None:
   triangle_offset = channel_font_height + get_max_label_size([title], title_font_size, font_path)[1]
