@@ -6,11 +6,14 @@ import cv2
 import pandas as pd
 import math
 from PIL import Image, ImageDraw, ImageFont, ImageChops
+from PIL.ImageOps import invert
 from skimage import exposure
 
-def rescale_intensity(img, t_min=None, t_max=None):
+def rescale_intensity(img, t_min=None, t_max=None, gamma=1.0, invert=False):
   # Convert to RGB
   img = np.array(img)
+
+  print(np.min(img), np.max(img), gamma)
 
   # Rescale
   img = img*1.0
@@ -21,7 +24,12 @@ def rescale_intensity(img, t_min=None, t_max=None):
     t_max = np.max(img)
 
   img = exposure.rescale_intensity(img, in_range=(t_min, t_max))
+
+  img = exposure.adjust_gamma(img, gamma)
   img = (255*img).astype(np.uint8)
+
+  if invert:
+    img = cv2.bitwise_not(img)
 
   img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
@@ -37,11 +45,13 @@ Arguments:
   path str Path to the image
   t_min int Minimum value. Defaults to None
   t_max int Maximum value. Defaults to None
+  gamma float Gamma correction. Defaults to 1.0
+  invert bool Whether to invert the image
 
 Output:
   PIL.Image
 """
-def import_img(path, t_min=None, t_max=None):
+def import_img(path):
   img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
 
   if img is None:
@@ -49,18 +59,6 @@ def import_img(path, t_min=None, t_max=None):
 
   # Convert to RGB
   img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-
-  # Rescale
-  img = img*1.0
-  if t_min is None:
-    t_min = np.min(img)
-
-  if t_max is None:
-    t_max = np.max(img)
-
-  img = exposure.rescale_intensity(img, in_range=(t_min, t_max))
-  img = (255*img).astype(np.uint8)
-
   img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
 
   return img
@@ -324,12 +322,16 @@ Arguments:
 Output:
   PIL.Image
 """
-def merge_imgs(imgs, colors):
+def merge_imgs(imgs, colors, invert_img=False):
   merged_img = Image.new('RGB', (imgs[0].size[0], imgs[0].size[1]), color=(0,0,0))
   for key, img in enumerate(imgs):
     lut = get_lut(colors[key])
+    if invert_img:
+      img = invert(img)
     img = img.point(lut)
     merged_img = ImageChops.add(merged_img, img)
+  # if invert_img:
+  #   merged_img = invert(img)
 
   return merged_img
 
@@ -376,7 +378,7 @@ def draw_scale_bar(img, color, pixels_per_um, zoom=1, font_path=None, font_size=
   height = img.size[1]
 
   bar_width = int(bar_width*pixels_per_um)*zoom
-  bar_height = int(bar_height*pixels_per_um) if height > 500 else 8
+  bar_height = int(bar_height*pixels_per_um) if height > 500 else 4
   bar_padding = bar_padding
 
   anchor_x = anchor[0]

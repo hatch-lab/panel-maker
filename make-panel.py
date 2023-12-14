@@ -5,7 +5,7 @@ Converts sets of TIFFs into a figure-ready panel
 
 Usage:
   make-panel.py INPUT_DIR... 
-  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None]
+  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
@@ -14,6 +14,7 @@ Options:
   -h --help  Show this screen.
   --min=<int>
   --max=<int>
+  --gamma=<float>  [default: 1.0] Gamma correction function.
   --channel=<string>  Optional. The label for the channel.
   --label=<string>  Optional. The label of each set of images, or one label for all sets of images
   --color=<string>  The hues to use for the merged image. Defaults to yellow, magenta, turq, cyan.
@@ -29,12 +30,15 @@ Options:
   --zoom-anchor=<str>  [default: mm] If zooming, whether to zoom in from the lt, lm, lr, mt, mm, mr, bt, bm, br (left-top, left-middle, left-right, middle-top, and so forth)
   --n-channels=<int> Instead of detecting the number of channels, specify it by hand
   --skip=<int> Channel to skip, indexed by 1
+  --skip-except-merge=<int> Channel to skip except for the merge, indexed by 1
   --annotate-gradient=<str>  Add an ascending gradient to the left (if set to l) or right of all input panels
   --title=<str>  An overall title
   --label-font-size=<int>  The font size in points
   --channel-font-size=<int>  The font size in points
   --title-font-size=<int>  The font size in points
   --bar-font-size=<int>  The font size in points
+  --skip-bar  Whether to skip the scale bar
+  --invert  Invert the image
 
 Output:
   A TIFF file
@@ -78,8 +82,9 @@ arguments = docopt(__doc__, version='1.0')
 schema_def = {
   'INPUT_DIR': [ os.path.exists ],
   '--out': Or(None, And(Use(os.path.expanduser), os.path.exists, error='--out does not exist')),
-  '--min': [ Or(None, And(Use(int), lambda n: 0 <= n, error='--min must be greater than or equal to 0')) ],
-  '--max': [ Or(None, And(Use(int), lambda n: 0 <= n, error='--max must be greater than or equal to 0')) ],
+  '--min': [ Or(None, And(Use(int), lambda n: -1 <= n <= 255, error='--min must be greater than or equal to 0')) ],
+  '--max': [ Or(None, And(Use(int), lambda n: -1 <= n <= 255, error='--max must be greater than or equal to 0')) ],
+  '--gamma': [ Or(None, And(Use(float), lambda n: 0 <= n, error='--gamma cannot be negative')) ],
   '--channel': [ Or(None, lambda x: len(x) >= 0) ],
   '--label': [ Or(None, lambda x: len(x) >= 0) ],
   '--merge-label': lambda x: len(x) >= 0,
@@ -92,10 +97,13 @@ schema_def = {
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
   Optional('--skip-merge'): bool,
+  Optional('--skip-bar'): bool,
+  Optional('--invert'): bool,
   '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
   '--zoom-anchor': [ lambda n: n in [ 'lt', 'lm', 'lb', 'mt', 'mm', 'mb', 'rt', 'rm', 'rb' ] ],
   '--n-channels': Or(None, And(Use(int), lambda n: 0 < n, error='--n-channels must be greater than 0')),
   '--skip': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip must be greater than or equal to 1"))],
+  '--skip-except-merge': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip-except-merge must be greater than or equal to 1"))],
   '--label-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--label-font-size must be greater than 1")),
   '--channel-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--channel-font-size must be greater than 1")),
   '--title-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--title-font-size must be greater than 1")),
@@ -119,6 +127,7 @@ img_dirs = [ Path(x).resolve() for x in arguments['INPUT_DIR'] ]
 output_dir = img_dirs[0] if arguments['--out'] is None else Path(arguments['--out'])
 
 skips = [ int(x) for x in arguments['--skip'] ]
+skips_except_merge = [ int(x) for x in arguments['--skip-except-merge'] ]
 
 # Get the # of channels
 tiff_paths = get_tiff_paths(img_dirs[0], skips)
@@ -135,28 +144,31 @@ pixels_per_um = None
 img_width = None
 img_height = None
 if arguments['--pixels-per-um'] is None:
-  with tifffile.TiffFile(tiff_paths[0]) as tif:
-    img = tif.pages[0].asarray()
-    img_width = img.shape[1]
-    img_height = img.shape[0]
+  try:
+    with tifffile.TiffFile(tiff_paths[0]) as tif:
+      img = tif.pages[0].asarray()
+      img_width = img.shape[1]
+      img_height = img.shape[0]
 
-    if 'spatial-calibration-x' in tif.pages[0].description:
-      # Try from the description
+      if 'spatial-calibration-x' in tif.pages[0].description:
+        # Try from the description
 
-      metadata = ET.fromstring(tif.pages[0].description)
-      plane_data = metadata.find("PlaneInfo")
+        metadata = ET.fromstring(tif.pages[0].description)
+        plane_data = metadata.find("PlaneInfo")
 
-      for prop in plane_data.findall("prop"):
-        if prop.get("id") == "spatial-calibration-x":
-          pixels_per_um = 1/float(prop.get("value"))
-          break
-    
-    elif 'XResolution' in tif.pages[0].tags:
-      # Try from the XResolution tag
-      pixels_per_um = tif.pages[0].tags['XResolution'].value
+        for prop in plane_data.findall("prop"):
+          if prop.get("id") == "spatial-calibration-x":
+            pixels_per_um = 1/float(prop.get("value"))
+            break
+      
+      elif 'XResolution' in tif.pages[0].tags:
+        # Try from the XResolution tag
+        pixels_per_um = tif.pages[0].tags['XResolution'].value
 
-      if len(pixels_per_um) == 2:
-        pixels_per_um = pixels_per_um[0]/pixels_per_um[1]
+        if len(pixels_per_um) == 2:
+          pixels_per_um = pixels_per_um[0]/pixels_per_um[1]
+  except:
+    pixels_per_um = float(input("Please enter pixels/µm:"))
 
 else:
   with tifffile.TiffFile(tiff_paths[0]) as tif:
@@ -167,14 +179,13 @@ else:
 
 # Get color data
 default_colors = [ "hatch-c4", "hatch-c3", "hatch-c2", "hatch-c1" ]
-colors = [ re.sub("[^a-zA-Z0-9]", "", color) for color in arguments['--color'] if Path("./luts/" + re.sub("[^a-zA-Z0-9]", "", color) + ".lut").exists()  ]
+colors = [ re.sub("[^a-zA-Z0-9-]", "", color) for color in arguments['--color'] if Path("./luts/" + re.sub("[^a-zA-Z0-9-]", "", color) + ".lut").exists()  ]
 if len(colors) < num_channels:
   colors.extend(default_colors[(4-num_channels-len(colors)):4])
 
-
 # Get threshold params
-min_thresholds = [ int(x) for x in arguments['--min'] ]
-max_thresholds = [ int(x) for x in arguments['--max'] ]
+min_thresholds = [ int(x) if x != -1 else None for x in arguments['--min'] ]
+max_thresholds = [ int(x) if x != -1 else None for x in arguments['--max'] ]
 
 min_thresholds = fill_list(min_thresholds, num_channels, None)
 max_thresholds = fill_list(max_thresholds, num_channels, None)
@@ -220,6 +231,9 @@ skip_merge = bool(arguments['--skip-merge'])
 font_path = (Path(__file__).parent / "fonts/Geogrotesque-SemiBold.ttf").resolve()
 add_triangle = arguments['--annotate-gradient']
 title = arguments['--title']
+gamma = [ float(x) for x in arguments['--gamma'] ]
+gamma = fill_list(gamma, num_channels, 1.0)
+invert = bool(arguments['--invert'])
 
 
 
@@ -247,26 +261,26 @@ for input_key, img_dir in enumerate(img_dirs):
     max_threshold = max_thresholds[channel_key]
 
     if len(tiff_paths) > channel_key and tiff_paths[channel_key].exists():
-      img = import_img(tiff_paths[channel_key], min_threshold, max_threshold)
+      img = import_img(tiff_paths[channel_key])
     else:
       img = get_blank_img(img_width, img_height)
 
     if zoom > 1:
       img = crop_img(img, zoom, zoom_anchor[input_key])
-      if min_threshold is None or max_threshold is None:
-        # We may need to restretch the histogram after cropping
-        img = rescale_intensity(img, min_threshold, max_threshold)
+      
+    img = rescale_intensity(img, min_threshold, max_threshold, gamma[channel_key], invert)
 
     if is_first:
       labelled_img = label_img(img, channel_label, color, channel_font_size, font_path, font_height=channel_font_height)
     else:
       labelled_img = label_img(img, "", color, channel_font_size, font_path, 0)
     
-    imgs.append(labelled_img)
+    if (channel_key+1) not in skips_except_merge:
+      imgs.append(labelled_img)
     to_merge.append(img)
 
   if not skip_merge:
-    merged = merge_imgs(to_merge, colors)
+    merged = merge_imgs(to_merge, colors, invert)
     if is_first:
       merged = label_img(merged, merge_label, (0,0,0), channel_font_size, font_path, font_height=channel_font_height)
     else:
@@ -282,14 +296,15 @@ for input_key, img_dir in enumerate(img_dirs):
   panels.append(panel)
   is_first = False
 
-img = assemble_panel(panels, num_rows=len(panels), margin=panel_padding, padding=0)
+img = assemble_panel(panels, num_rows=len(panels), margin=panel_padding, padding=panel_padding)
 
 if title is not None:
   img = label_img(img, title, (0,0,0), font_path=font_path, font_size=title_font_size)
 
 # Add scale bar
-if pixels_per_um is not None:
-  img = draw_scale_bar(img, (255,255,255), pixels_per_um, zoom = zoom, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
+if pixels_per_um is not None and not arguments['--skip-bar']:
+  bar_color = (0,0,0) if invert else (255,255,255)
+  img = draw_scale_bar(img, bar_color, pixels_per_um, zoom = zoom, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
 
 if add_triangle is not None:
   triangle_offset = channel_font_height + get_max_label_size([title], title_font_size, font_path)[1]
