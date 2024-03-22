@@ -5,7 +5,7 @@ Converts sets of TIFFs into a figure-ready panel
 
 Usage:
   make-panel.py INPUT_DIR... 
-  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
+  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--only-merge] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
@@ -23,6 +23,7 @@ Options:
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
   --merge-label=<string>  [default: Merged] The label to use for the merged image
   --skip-merge  Whether to skip a merge panel
+  --only-merge  Whether to only output the merged panel
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar
   --out=<str>  Required only if more than one INPUT_DIR is present. The output directory where the final TIFF is to be written.
@@ -48,13 +49,14 @@ import os
 import re
 from pathlib import Path
 from docopt import docopt
-from lib import import_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
+from lib import import_img, multi_label_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
 import json
 from schema import Schema, And, Or, Use, SchemaError, Optional
 from tifffile import tifffile
 import defusedxml.ElementTree as ET
 import numpy as np
 import cv2
+import natsort
 
 def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
@@ -69,11 +71,10 @@ def get_tiff_paths(parent_path, skips):
   for e in extensions:
       tiff_paths.extend(list(parent_path.glob(e)))
 
-  tiff_paths.sort(key=lambda x: str(x))
+  tiff_paths = natsort.natsorted(tiff_paths)
   tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." and (i+1) not in skips ]
   if (parent_path / "params.json").exists() and (parent_path / "panel.tif").exists():
     tiff_paths = [ path for path in tiff_paths if path.name != "panel.tif" ]
-
 
   return tiff_paths
 
@@ -97,6 +98,7 @@ schema_def = {
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
   Optional('--skip-merge'): bool,
+  Optional('--only-merge'): bool,
   Optional('--skip-bar'): bool,
   Optional('--invert'): bool,
   '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
@@ -228,7 +230,8 @@ bar_padding = int(arguments['--bar-padding'])
 zoom = float(arguments['--zoom'])
 zoom_anchor = fill_list(arguments['--zoom-anchor'], len(img_dirs), arguments['--zoom-anchor'][0])
 skip_merge = bool(arguments['--skip-merge'])
-font_path = (Path(__file__).parent / "fonts/Geogrotesque-SemiBold.ttf").resolve()
+only_merge = bool(arguments['--only-merge'])
+font_path = (Path(__file__).parent / "fonts/Arial Unicode.ttf").resolve()
 add_triangle = arguments['--annotate-gradient']
 title = arguments['--title']
 gamma = [ float(x) for x in arguments['--gamma'] ]
@@ -281,11 +284,16 @@ for input_key, img_dir in enumerate(img_dirs):
 
   if not skip_merge:
     merged = merge_imgs(to_merge, colors, invert)
-    if is_first:
+    if is_first and not only_merge:
       merged = label_img(merged, merge_label, (0,0,0), channel_font_size, font_path, font_height=channel_font_height)
+    elif is_first and only_merge:
+      merged = multi_label_img(merged, channel_labels[0:len(colors)], colors, channel_font_size, font_path, font_height=channel_font_height)
     else:
       merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
     imgs.append(merged)
+
+  if only_merge:
+    imgs = [imgs[-1]]
 
   panel = assemble_panel(imgs, num_rows=num_rows, padding=panel_padding, margin=0)
   if len(label) > 0:

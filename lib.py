@@ -200,6 +200,74 @@ def get_blank_img(width, height):
 
   return new
 
+def multi_label_img(img, labels, colors, font_size, font_path, font_height=None, position='tl', space=" "):
+  font = ImageFont.truetype(str(font_path), size=font_size)
+
+  position_2_anchor = {
+    'tl': 'la',
+    'tr': 'ra',
+    'bl': 'ld',
+    'br': 'rd'
+  }
+
+  padding = int(font_size/9)
+
+  if font_height is None:
+    font_height = get_max_label_size(labels, font_size, font_path)[1]
+
+  font_height += padding
+
+  height = img.size[1] + font_height
+  width = img.size[0]
+
+  new = Image.new('RGB', (width, height), (255,255,255))
+
+  if position == 'tl' or position == 'tr':
+    # image is on the bottom
+    new.paste(img, (0, font_height))
+  else:
+    # image is on the top
+    new.paste(img, (0, 0))
+
+  draw = ImageDraw.Draw(new)
+
+  def get_xy(position, width, height, x_offset):
+    if position == "tl":
+      return (x_offset, 0)
+
+    if position == "tr":
+      return (width-x_offset, 0)
+
+    if position == "bl":
+      return (x_offset, height)
+
+    if position == "br":
+      return (width-x_offset, height)
+
+  x_offset = 0
+  for i in range(len(labels)):
+    label = str(labels[i]).replace("\\n", "\n") + space
+    color = colors[i]
+
+    if isinstance(color, str):
+      # Get the color RGB values
+      lut = get_lut(color, as_table=True)
+      row = lut.iloc[200]
+      color = (row['Red'], row['Green'], row['Blue'])
+
+    color = "(" + ",".join(map(str,color)) + ")"
+
+    draw.text(
+      get_xy(position, width, height, x_offset), 
+      str(label), 
+      fill='rgb' + color, 
+      font=font,
+      anchor=position_2_anchor[position]
+    )
+    x_offset += get_max_label_size([ label ], font_size, font_path)[0]
+
+  return new
+
 """
 Add a label to an image
 
