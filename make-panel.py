@@ -5,7 +5,7 @@ Converts sets of TIFFs into a figure-ready panel
 
 Usage:
   make-panel.py INPUT_DIR... 
-  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--skip-merge] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
+  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--merge-mode=both] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
@@ -22,7 +22,7 @@ Options:
   --pixels-per-um=<float>  Optional. Pixels per micron. Will attempt to extract this from the first TIFF found.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
   --merge-label=<string>  [default: Merged] The label to use for the merged image
-  --skip-merge  Whether to skip a merge panel
+  --merge-mode=<string>  [default: both] If both, outputs grayscale channels and merge; skip, no merge; only, only the merge
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar
   --out=<str>  Required only if more than one INPUT_DIR is present. The output directory where the final TIFF is to be written.
@@ -70,7 +70,8 @@ def get_tiff_paths(parent_path, skips):
       tiff_paths.extend(list(parent_path.glob(e)))
 
   tiff_paths.sort(key=lambda x: str(x))
-  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." and (i+1) not in skips ]
+  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." ]
+  tiff_paths = [ path for i,path in enumerate(tiff_paths) if (i+1) not in skips ]
   if (parent_path / "params.json").exists() and (parent_path / "panel.tif").exists():
     tiff_paths = [ path for path in tiff_paths if path.name != "panel.tif" ]
 
@@ -96,7 +97,7 @@ schema_def = {
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
-  Optional('--skip-merge'): bool,
+  '--merge-mode': lambda x: x in ("both", "skip", "only"),
   Optional('--skip-bar'): bool,
   Optional('--invert'): bool,
   '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
@@ -227,7 +228,12 @@ panel_padding = int(arguments['--padding'])
 bar_padding = int(arguments['--bar-padding'])
 zoom = float(arguments['--zoom'])
 zoom_anchor = fill_list(arguments['--zoom-anchor'], len(img_dirs), arguments['--zoom-anchor'][0])
-skip_merge = bool(arguments['--skip-merge'])
+skip_merge = False
+skip_channels = False
+if arguments['--merge-mode'] == "skip":
+  skip_merge = True
+elif arguments['--merge-mode'] == 'only':
+  skip_channels = True
 font_path = (Path(__file__).parent / "fonts/Geogrotesque-SemiBold.ttf").resolve()
 add_triangle = arguments['--annotate-gradient']
 title = arguments['--title']
@@ -247,6 +253,7 @@ is_first = True
 for input_key, img_dir in enumerate(img_dirs):
   label = labels[input_key]
   tiff_paths = get_tiff_paths(img_dir, skips)
+  print(tiff_paths)
   imgs = []
   to_merge = []
 
@@ -275,16 +282,17 @@ for input_key, img_dir in enumerate(img_dirs):
     else:
       labelled_img = label_img(img, "", color, channel_font_size, font_path, 0)
     
-    if (channel_key+1) not in skips_except_merge:
+    if (channel_key+1) not in skips_except_merge and skip_channels is not True:
       imgs.append(labelled_img)
     to_merge.append(img)
 
   if not skip_merge:
     merged = merge_imgs(to_merge, colors, invert)
-    if is_first:
-      merged = label_img(merged, merge_label, (0,0,0), channel_font_size, font_path, font_height=channel_font_height)
-    else:
-      merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
+    if not skip_channels:
+      if is_first:
+        merged = label_img(merged, merge_label, (0,0,0), channel_font_size, font_path, font_height=channel_font_height)
+      else:
+        merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
     imgs.append(merged)
 
   panel = assemble_panel(imgs, num_rows=num_rows, padding=panel_padding, margin=0)
