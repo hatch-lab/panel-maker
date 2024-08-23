@@ -48,13 +48,14 @@ import os
 import re
 from pathlib import Path
 from docopt import docopt
-from lib import import_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
+from lib import import_img, multi_label_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
 import json
 from schema import Schema, And, Or, Use, SchemaError, Optional
 from tifffile import tifffile
 import defusedxml.ElementTree as ET
 import numpy as np
 import cv2
+import natsort
 
 def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
@@ -69,12 +70,10 @@ def get_tiff_paths(parent_path, skips):
   for e in extensions:
       tiff_paths.extend(list(parent_path.glob(e)))
 
-  tiff_paths.sort(key=lambda x: str(x))
-  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." ]
-  tiff_paths = [ path for i,path in enumerate(tiff_paths) if (i+1) not in skips ]
+  tiff_paths = natsort.natsorted(tiff_paths)
+  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." and (i+1) not in skips ]
   if (parent_path / "params.json").exists() and (parent_path / "panel.tif").exists():
     tiff_paths = [ path for path in tiff_paths if path.name != "panel.tif" ]
-
 
   return tiff_paths
 
@@ -98,6 +97,8 @@ schema_def = {
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
   '--merge-mode': lambda x: x in ("both", "skip", "only"),
+  Optional('--skip-merge'): bool,
+  Optional('--only-merge'): bool,
   Optional('--skip-bar'): bool,
   Optional('--invert'): bool,
   '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
@@ -234,7 +235,7 @@ if arguments['--merge-mode'] == "skip":
   skip_merge = True
 elif arguments['--merge-mode'] == 'only':
   skip_channels = True
-font_path = (Path(__file__).parent / "fonts/Geogrotesque-SemiBold.ttf").resolve()
+font_path = (Path(__file__).parent / "fonts/Arial Unicode.ttf").resolve()
 add_triangle = arguments['--annotate-gradient']
 title = arguments['--title']
 gamma = [ float(x) for x in arguments['--gamma'] ]
@@ -294,6 +295,9 @@ for input_key, img_dir in enumerate(img_dirs):
       else:
         merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
     imgs.append(merged)
+
+  if only_merge:
+    imgs = [imgs[-1]]
 
   panel = assemble_panel(imgs, num_rows=num_rows, padding=panel_padding, margin=0)
   if len(label) > 0:
