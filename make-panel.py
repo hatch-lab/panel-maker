@@ -5,7 +5,7 @@ Converts sets of TIFFs into a figure-ready panel
 
 Usage:
   make-panel.py INPUT_DIR... 
-  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--merge-mode=both] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert]
+  make-panel.py INPUT_DIR... [--out=<str>] [--zoom=1.0...] [--draw-box=<str>...] [--box-stroke=2] [--bar-height=<float>] [--zoom-anchor="mm"...] [--skip=1...] [--skip-except-merge=1...] [--gamma=1.0...] [--min=<int>...] [--max=<int>...] [--channel=<string>...] [--label=<string>...] [--color=<str>...] [--rows=1] [--pixels-per-um=5.58] [--bar-microns=20] [--merge-label=Merged] [--merge-mode=both] [--padding=10] [--bar-padding=2] [--label-font-size=55] [--bar-font-size=30] [--channel-font-size=40] [--title-font-size=40] [--n-channels=None] [--annotate-gradient=None] [--title=None] [--skip-bar] [--invert] [--bar-label=None] [--dpi=<int>]
 
 Arguments:
   INPUT_DIR  The directory with TIFF files of each channel. If multiple directories provided, a composite panel will be generated, saved to --out. Each needs to have the same channels and resolutions.
@@ -20,14 +20,18 @@ Options:
   --color=<string>  The hues to use for the merged image. Defaults to yellow, magenta, turq, cyan.
   --rows=<int>  [default: 1] Number of rows we should have in our panel
   --pixels-per-um=<float>  Optional. Pixels per micron. Will attempt to extract this from the first TIFF found.
+  --bar-label=<string>  Optional. Defaults to the number of microns.
   --bar-microns=<int>  [default: 20] The width of the scale bar. Defaults to 20 um.
+  --bar-height=<float>  [default: 2] The height of the scale bar in microns.
   --merge-label=<string>  [default: Merged] The label to use for the merged image
   --merge-mode=<string>  [default: both] If both, outputs grayscale channels and merge; skip, no merge; only, only the merge
   --padding=<int>  [default: 10] The number of pixels between each panel
   --bar-padding=<int>  [default: 20] The number of pixels to inset the scale bar
   --out=<str>  Required only if more than one INPUT_DIR is present. The output directory where the final TIFF is to be written.
-  --zoom=<float>  [default: 1] If images should be zoomed in and cropped.
+  --zoom=<float>|<str>  [default: 1] If images should be zoomed in and cropped. Can also supply a tuple in the format (start_x, start_y, width, height).
   --zoom-anchor=<str>  [default: mm] If zooming, whether to zoom in from the lt, lm, lr, mt, mm, mr, bt, bm, br (left-top, left-middle, left-right, middle-top, and so forth)
+  --draw-box=<str>  [default: ] Draw a box at the coordinates (start_x, start_y, width, height).
+  --box-stroke=<int>  [default: 2]
   --n-channels=<int> Instead of detecting the number of channels, specify it by hand
   --skip=<int> Channel to skip, indexed by 1
   --skip-except-merge=<int> Channel to skip except for the merge, indexed by 1
@@ -39,6 +43,7 @@ Options:
   --bar-font-size=<int>  The font size in points
   --skip-bar  Whether to skip the scale bar
   --invert  Invert the image
+  --dpi=<int>  [default: 300] The output DPI
 
 Output:
   A TIFF file
@@ -48,14 +53,14 @@ import os
 import re
 from pathlib import Path
 from docopt import docopt
-from lib import import_img, multi_label_img, label_img, merge_imgs, crop_img, assemble_panel, draw_scale_bar, get_max_label_size, label_panel, get_blank_img, rescale_intensity, add_gradient_triangle
+from lib import *
 import json
-from schema import Schema, And, Or, Use, SchemaError, Optional
+from schema import Schema, And, Or, Use, SchemaError, Optional, Regex
 from tifffile import tifffile
 import defusedxml.ElementTree as ET
 import numpy as np
+from natsort import os_sorted
 import cv2
-import natsort
 
 def fill_list(val, min_len, default, end="end"):
   diff = min_len - len(val)
@@ -70,15 +75,17 @@ def get_tiff_paths(parent_path, skips):
   for e in extensions:
       tiff_paths.extend(list(parent_path.glob(e)))
 
-  tiff_paths = natsort.natsorted(tiff_paths)
   tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." and (i+1) not in skips ]
   if (parent_path / "params.json").exists() and (parent_path / "panel.tif").exists():
     tiff_paths = [ path for path in tiff_paths if path.name != "panel.tif" ]
+    tiff_paths = os_sorted(tiff_paths, key=lambda x: x.stem)
 
   return tiff_paths
 
 ## Process inputs
+zoom_bb_match = re.compile(r"^\(([0-9]+),\s*([0-9]+),\s*([0-9]+),\s*([0-9]+)\)$")
 arguments = docopt(__doc__, version='1.0')
+
 schema_def = {
   'INPUT_DIR': [ os.path.exists ],
   '--out': Or(None, And(Use(os.path.expanduser), os.path.exists, error='--out does not exist')),
@@ -89,10 +96,13 @@ schema_def = {
   '--label': [ Or(None, lambda x: len(x) >= 0) ],
   '--merge-label': lambda x: len(x) >= 0,
   '--title': Or(None, lambda x: len(x) >= 0),
+  '--bar-label': Or(None, str),
+  '--dpi': And(Use(int), lambda n: 1 <= n, error="--dpi must be an integer greater than 0"),
   '--color': [ Or(None, lambda x: len(x) >= 0) ],
   '--rows': And(Use(int), lambda n: 0 < n, error='--rows must be an integer greater than or equal to 1'),
   '--pixels-per-um': Or(None, And(Use(float), lambda n: 0< n, error="pixels-per-um does not appear to be a number" )),
   '--bar-microns': And(Use(int), lambda n: 1 <= n, error="--bar-microns must be an integer greater than 0"),
+  '--bar-height': Or(None, And(Use(float), lambda n: 1 <= n, error="--bar-height must be greater than 0")),
   '--padding': And(Use(int), lambda n: 0 <= n, error="--padding must be greater or equal to 0"),
   '--bar-padding': And(Use(int), lambda n: 0 <= n, error="--bar-padding must be greater or equal to 0"),
   '--bar-font-size': Or(None, And(Use(int), lambda n: 1 < n, error="--bar-font-size must be greater than 1")),
@@ -101,8 +111,10 @@ schema_def = {
   Optional('--only-merge'): bool,
   Optional('--skip-bar'): bool,
   Optional('--invert'): bool,
-  '--zoom': And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1"),
+  '--zoom': [ Or(Regex(zoom_bb_match), And(Use(float), lambda n: n >= 1, error="--zoom must be at least 1")) ],
   '--zoom-anchor': [ lambda n: n in [ 'lt', 'lm', 'lb', 'mt', 'mm', 'mb', 'rt', 'rm', 'rb' ] ],
+  '--draw-box': [ Regex(zoom_bb_match) ],
+  '--box-stroke': And(Use(int), lambda n: 1 <= n, error="--box-stroke must be an integer greater than 0"),
   '--n-channels': Or(None, And(Use(int), lambda n: 0 < n, error='--n-channels must be greater than 0')),
   '--skip': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip must be greater than or equal to 1"))],
   '--skip-except-merge': [ Or(None, And(Use(int), lambda n: 0 < n, error="--skip-except-merge must be greater than or equal to 1"))],
@@ -225,10 +237,37 @@ else:
 # Get the rest of the arguments
 num_rows = int(arguments['--rows'])
 bar_microns = int(arguments['--bar-microns'])
+bar_height = float(arguments['--bar-height']) if arguments['--bar-height'] is not None else 2.
 panel_padding = int(arguments['--padding'])
 bar_padding = int(arguments['--bar-padding'])
-zoom = float(arguments['--zoom'])
+bar_label = arguments['--bar-label']
 zoom_anchor = fill_list(arguments['--zoom-anchor'], len(img_dirs), arguments['--zoom-anchor'][0])
+zoom = []
+for i, z in enumerate(arguments['--zoom']):
+  if isinstance(z, str):
+    m = zoom_bb_match.match(z)
+    start_x = int(m.group(1))
+    start_y = int(m.group(2))
+    end_x = start_x + int(m.group(3))
+    end_y = start_y + int(m.group(4))
+    zoom.append(( start_x, start_y, end_x, end_y ))
+  elif z > 1.0:
+    zoom.append(anchor2bb(img_width, img_height, z, zoom_anchor[i]))
+  else:
+    zoom.append(None)
+
+draw_box = []
+for i, z in enumerate(arguments['--draw-box']):
+  if isinstance(z, str):
+    m = zoom_bb_match.match(z)
+    start_x = int(m.group(1))
+    start_y = int(m.group(2))
+    end_x = start_x + int(m.group(3))
+    end_y = start_y + int(m.group(4))
+    draw_box.append(( start_x, start_y, end_x, end_y ))
+  else:
+    draw_box.append(None)
+box_stroke = arguments['--box-stroke']
 skip_merge = False
 skip_channels = False
 if arguments['--merge-mode'] == "skip":
@@ -241,6 +280,7 @@ title = arguments['--title']
 gamma = [ float(x) for x in arguments['--gamma'] ]
 gamma = fill_list(gamma, num_channels, 1.0)
 invert = bool(arguments['--invert'])
+dpi = int(arguments['--dpi'])
 
 
 
@@ -273,10 +313,14 @@ for input_key, img_dir in enumerate(img_dirs):
     else:
       img = get_blank_img(img_width, img_height)
 
-    if zoom > 1:
-      img = crop_img(img, zoom, zoom_anchor[input_key])
+
+    if zoom[input_key] is not None:
+      img = crop_img(img, zoom[input_key])
       
     img = rescale_intensity(img, min_threshold, max_threshold, gamma[channel_key], invert)
+
+    if draw_box[input_key] is not None:
+      img = draw_bounding_box(img, draw_box[input_key], box_stroke)
 
     if is_first:
       labelled_img = label_img(img, channel_label, color, channel_font_size, font_path, font_height=channel_font_height)
@@ -316,7 +360,22 @@ if title is not None:
 # Add scale bar
 if pixels_per_um is not None and not arguments['--skip-bar']:
   bar_color = (0,0,0) if invert else (255,255,255)
-  img = draw_scale_bar(img, bar_color, pixels_per_um, zoom = zoom, font_size = bar_font_size, bar_width = bar_microns, bar_padding=(bar_padding+panel_padding), font_path=font_path)
+  zoom_factor = 1
+  if zoom[0] is not None:
+    new_width = zoom[0][2]-zoom[0][0]
+    zoom_factor = img_width/new_width
+  img = draw_scale_bar(
+    img, 
+    bar_color, 
+    pixels_per_um, 
+    zoom_factor=zoom_factor, 
+    font_size=bar_font_size, 
+    bar_label=bar_label, 
+    bar_width=bar_microns,
+    bar_height=bar_height,
+    bar_padding=(bar_padding+panel_padding), 
+    font_path=font_path
+  )
 
 if add_triangle is not None:
   triangle_offset = channel_font_height + get_max_label_size([title], title_font_size, font_path)[1]
@@ -329,6 +388,8 @@ params = {
   "max_thresholds": max_thresholds,
   "colors": colors,
   "bar_microns": bar_microns,
+  "bar_label": bar_label,
+  "bar_height": bar_height,
   "pixels_per_um": pixels_per_um,
   "merge_label": merge_label,
   "num_rows": num_rows,
@@ -337,7 +398,10 @@ params = {
   "label_font_size": label_font_size,
   "channel_font_size": channel_font_size,
   "zoom": zoom,
-  "zoom_anchor": zoom_anchor
+  "zoom_anchor": zoom_anchor,
+  "draw_box": draw_box,
+  "box_stroke": box_stroke,
+  "dpi": dpi
 }
 
 if pixels_per_um is not None:
@@ -348,8 +412,8 @@ if pixels_per_um is not None:
 else:
   tiff_info = {}
 
-img.save(output_dir / "panel.tif", tiffinfo=tiff_info)
-img.save(output_dir / "panel.jpg")
+img.save(output_dir / "panel.tif", tiffinfo=tiff_info, dpi=(dpi, dpi))
+img.save(output_dir / "panel.jpg", dpi=(dpi, dpi))
 with open(str((output_dir / "params.json")), 'w') as fp:
   fp.write(json.dumps(params))
 

@@ -403,17 +403,12 @@ def merge_imgs(imgs, colors, invert_img=False):
 
   return merged_img
 
-def crop_img(img, factor, anchor='mm'):
-  width = img.size[0]
-  height = img.size[1]
-
+def anchor2bb(width, height, factor, anchor='mm'):
   new_width = int(width / factor)
   new_height = int(height / factor)
 
   anchor_x = anchor[0]
   anchor_y = anchor[1]
-
-  to_coords = (0,0)
 
   # Find the coords for cropping
   if anchor_x == 'm':
@@ -432,20 +427,39 @@ def crop_img(img, factor, anchor='mm'):
   
   from_bb = (from_x, from_y, min(from_x+new_width, width), min(from_y+new_height, height))
 
+  return from_bb
+
+def crop_img(img, bb):
+  width = img.size[0]
+  height = img.size[1]
+
+  new_width = int(bb[2]-bb[0])
+  new_height = int(bb[3]-bb[1])
+
+  to_coords = (0,0)
+
   new = Image.new('RGB', (new_width, new_height))
-  new.paste(img.crop(from_bb))
+  new.paste(img.crop(bb))
 
   return new
 
-def draw_scale_bar(img, color, pixels_per_um, zoom=1, font_path=None, font_size=12, bar_width=20, bar_height=2, bar_padding=40, anchor='rb'):
+def draw_bounding_box(img, bb, stroke_width=2):
+  draw = ImageDraw.Draw(img)
+  draw.rectangle(bb, outline='rgb(255,255,255)', width=stroke_width)
+
+  return img
+
+def draw_scale_bar(img, color, pixels_per_um, zoom_factor=1, font_path=None, font_size=12, bar_label=None, bar_width=20, bar_height=2, bar_padding=40, anchor='rb'):
+  if bar_label is None:
+    bar_label = str(bar_width) + " µm"
+    
   if font_path is not None:
     font = ImageFont.truetype(str(font_path), size=font_size)
-    label = str(bar_width) + " µm"
 
   width = img.size[0]
   height = img.size[1]
 
-  bar_width = int(bar_width*pixels_per_um)*zoom
+  bar_width = int(bar_width*pixels_per_um)*zoom_factor
   bar_height = int(bar_height*pixels_per_um) if height > 500 else 4
   bar_padding = bar_padding
 
@@ -481,11 +495,11 @@ def draw_scale_bar(img, color, pixels_per_um, zoom=1, font_path=None, font_size=
   draw.rectangle(bb, fill='rgb' + color)
 
   if font_path is not None:
-    label_font_size = get_max_label_size([ label ], font_size, font_path)
+    label_font_size = get_max_label_size([ bar_label ], font_size, font_path)
 
     draw.text(
       ( int(x+bar_width/2-label_font_size[0]/2), y-label_font_size[1] ),
-      label,
+      bar_label,
       fill='rgb' + color, 
       font=font,
       align='center'
