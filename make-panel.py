@@ -75,10 +75,12 @@ def get_tiff_paths(parent_path, skips):
   for e in extensions:
       tiff_paths.extend(list(parent_path.glob(e)))
 
-  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." and (i+1) not in skips ]
+  tiff_paths = [ path for i,path in enumerate(tiff_paths) if path.name[0] != "." ]
   if (parent_path / "params.json").exists() and (parent_path / "panel.tif").exists():
     tiff_paths = [ path for path in tiff_paths if path.name != "panel.tif" ]
     tiff_paths = os_sorted(tiff_paths, key=lambda x: x.stem)
+
+  tiff_paths = [  path for i, path in enumerate(tiff_paths) if (i+1) not in skips]
 
   return tiff_paths
 
@@ -255,6 +257,7 @@ for i, z in enumerate(arguments['--zoom']):
     zoom.append(anchor2bb(img_width, img_height, z, zoom_anchor[i]))
   else:
     zoom.append(None)
+zoom = fill_list(zoom, len(img_dirs), None)
 
 draw_box = []
 for i, z in enumerate(arguments['--draw-box']):
@@ -265,8 +268,7 @@ for i, z in enumerate(arguments['--draw-box']):
     end_x = start_x + int(m.group(3))
     end_y = start_y + int(m.group(4))
     draw_box.append(( start_x, start_y, end_x, end_y ))
-  else:
-    draw_box.append(None)
+
 box_stroke = arguments['--box-stroke']
 skip_merge = False
 skip_channels = False
@@ -319,8 +321,8 @@ for input_key, img_dir in enumerate(img_dirs):
       
     img = rescale_intensity(img, min_threshold, max_threshold, gamma[channel_key], invert)
 
-    if draw_box[input_key] is not None:
-      img = draw_bounding_box(img, draw_box[input_key], box_stroke)
+    for bb in draw_box:
+      img = draw_bounding_box(img, bb, box_stroke)
 
     if is_first:
       labelled_img = label_img(img, channel_label, color, channel_font_size, font_path, font_height=channel_font_height)
@@ -340,8 +342,6 @@ for input_key, img_dir in enumerate(img_dirs):
         merged = label_img(merged, "", (0,0,0), channel_font_size, font_path, 0)
     imgs.append(merged)
 
-  if only_merge:
-    imgs = [imgs[-1]]
 
   panel = assemble_panel(imgs, num_rows=num_rows, padding=panel_padding, margin=0)
   if len(label) > 0:
@@ -368,7 +368,7 @@ if pixels_per_um is not None and not arguments['--skip-bar']:
     img, 
     bar_color, 
     pixels_per_um, 
-    zoom_factor=zoom_factor, 
+    zoom_factor=1, 
     font_size=bar_font_size, 
     bar_label=bar_label, 
     bar_width=bar_microns,
